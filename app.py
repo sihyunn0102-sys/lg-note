@@ -10,6 +10,7 @@ import io
 
 st.set_page_config(page_title="시현님의 오답노트 치트키", layout="wide")
 
+# ── API 연결 설정 ──────────────────────────────────────────────
 try:
     GEMINI_API   = st.secrets["GEMINI_API_KEY"]
     NOTION_TOKEN = st.secrets.get("NOTION_TOKEN", "")
@@ -20,9 +21,8 @@ except Exception:
     st.error("Secrets 설정을 확인해주세요.")
     st.stop()
 
-# ── imgbb에 이미지 업로드 → URL 반환 ──────────────────────────
-def upload_image_to_imgbb(pil_image: Image.Image) -> str | None:
-    """PIL Image를 imgbb에 업로드하고 직접 URL을 반환."""
+# ── imgbb 이미지 업로드 ────────────────────────────────────────
+def upload_image_to_imgbb(pil_image: Image.Image):
     if not IMGBB_API:
         return None
     buf = io.BytesIO()
@@ -36,14 +36,8 @@ def upload_image_to_imgbb(pil_image: Image.Image) -> str | None:
         return res.json()["data"]["url"]
     return None
 
-# ── 노션 DB에 페이지 생성 ─────────────────────────────────────
-def send_to_notion(category: str, filename: str, analysis: str, image_url: str | None):
-    """
-    노션 DB에 한 페이지를 생성한다.
-    구조:
-      [이미지 블록]       ← 문제 사진
-      [토글 블록]         ← 풀이 (클릭해야 열림)
-    """
+# ── 노션 페이지 생성 ───────────────────────────────────────────
+def send_to_notion(category: str, filename: str, analysis: str, image_url):
     url = "https://api.notion.com/v1/pages"
     headers = {
         "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -51,10 +45,8 @@ def send_to_notion(category: str, filename: str, analysis: str, image_url: str |
         "Notion-Version": "2022-06-28",
     }
 
-    # 페이지 본문 블록 구성
     children = []
 
-    # 1) 문제 사진 블록 (이미지 URL이 있을 때만)
     if image_url:
         children.append({
             "object": "block",
@@ -65,7 +57,6 @@ def send_to_notion(category: str, filename: str, analysis: str, image_url: str |
             },
         })
 
-    # 2) 풀이 토글 블록 (눌러야 열리는 형태)
     children.append({
         "object": "block",
         "type": "toggle",
@@ -88,9 +79,9 @@ def send_to_notion(category: str, filename: str, analysis: str, image_url: str |
     data = {
         "parent": {"database_id": NOTION_DB_ID},
         "properties": {
-            "영역":   {"select": {"name": category}},
+            "영역": {"select": {"name": category}},
             "파일명": {"title": [{"text": {"content": filename}}]},
-            "날짜":   {"date": {"start": datetime.now().isoformat()}},
+            "날짜": {"date": {"start": datetime.now().isoformat()}},
         },
         "children": children,
     }
@@ -100,6 +91,7 @@ def send_to_notion(category: str, filename: str, analysis: str, image_url: str |
 
 # ── UI ────────────────────────────────────────────────────────
 st.title("🔋 시현님의 인적성 합격 치트키")
+st.caption("화공생물공학 전공의 강점을 살려 데이터로 오답을 정복하세요!")
 
 category = st.selectbox(
     "영역 선택", ["언어이해", "언어추리", "자료해석", "창의수리"]
@@ -109,15 +101,15 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files and st.button("일괄 분석 및 저장 시작"):
-    response = client.models.generate_content(
-    model="gemini-2.0-flash",
-    contents=[prompt, img],
-    )
-    analysis_txt = response.text  # ← 모델명 수정
-
     for file in uploaded_files:
         with st.spinner(f"{file.name} 분석 중..."):
             img = Image.open(file)
+
+            # PIL → bytes 변환
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            img_bytes = buf.getvalue()
+
             prompt = (
                 f"이것은 LG 인적성 {category} 문제야. "
                 "아래 형식으로 답해줘:\n"
@@ -125,16 +117,23 @@ if uploaded_files and st.button("일괄 분석 및 저장 시작"):
                 "2. 정답: (번호 또는 값)\n"
                 "3. 실수 방지 팁: (1줄)"
             )
+
             try:
-                res          = model.generate_content([prompt, img])
-                analysis_txt = res.text
+                response = client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=[
+                        prompt,
+                        types.Part.from_bytes(data=img_bytes, mime_type="image/png"),
+                    ],
+                )
+                analysis_txt = response.text
 
                 # imgbb 업로드
                 img_url = upload_image_to_imgbb(img)
 
-                # 노션 전송 (버그 수정: 변수명 통일)
+                # 노션 전송
                 notion_ok = False
-                if NOTION_TOKEN and NOTION_DB_ID:   # ← 오타 수정
+                if NOTION_TOKEN and NOTION_DB_ID:
                     notion_ok = send_to_notion(category, file.name, analysis_txt, img_url)
 
                 # 세션 히스토리
@@ -148,15 +147,13 @@ if uploaded_files and st.button("일괄 분석 및 저장 시작"):
                 })
 
                 # 결과 표시
-                with st.expander(f"📄 {file.name} 분석 결과"):
+                with st.expander(f"📄 {file.name} 분석 결과", expanded=True):
                     col1, col2 = st.columns([1, 1])
                     with col1:
-                        st.image(img, use_container_width=True)
+                        st.image(img, width='stretch')
                     with col2:
                         st.markdown(analysis_txt)
-                    if img_url:
-                        st.caption(f"🖼️ imgbb 업로드 완료: [링크]({img_url})")
-                    st.caption(f"📬 노션 전송: {'✅ 성공' if notion_ok else '❌ 실패 (Secrets 확인 필요)'}")
+                    st.caption(f"📬 노션 전송: {'✅ 성공' if notion_ok else '❌ 실패 (Secrets 또는 Integration 확인 필요)'}")
 
             except Exception as e:
                 st.error(f"❌ {file.name} 오류: {e}")
@@ -165,8 +162,8 @@ if uploaded_files and st.button("일괄 분석 및 저장 시작"):
 if "history" in st.session_state and st.session_state.history:
     st.divider()
     st.subheader("📊 이번 세션 분석 내역")
-    df  = pd.DataFrame(st.session_state.history)
-    st.dataframe(df, use_container_width=True)
+    df = pd.DataFrame(st.session_state.history)
+    st.dataframe(df, width='stretch')
     csv = df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "📥 CSV로 내보내기",
