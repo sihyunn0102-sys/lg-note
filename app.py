@@ -8,13 +8,21 @@ st.set_page_config(page_title="LG인적성 AI 오답노트", layout="centered")
 # Secrets에서 API 키 가져오기
 try:
     api_key = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=api_key)
+    # 통신 방식을 'rest'로 강제 지정하여 gRPC 404 오류 방지
+    genai.configure(api_key=api_key, transport='rest')
 except Exception:
     st.error("Secrets 설정에서 'GEMINI_API_KEY'를 확인해주세요.")
     st.stop()
 
 st.title("🔋 LG Energy Solution 인적성 오답노트")
-st.write("문항 캡처를 올려주시면 LG 인적성 전문가 AI가 분석해 드립니다.")
+
+# [진단 기능] 현재 사용 가능한 모델 리스트 확인
+with st.expander("🔍 내 API 키로 사용 가능한 모델 확인"):
+    try:
+        available_models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
+        st.write(available_models)
+    except Exception as e:
+        st.write("모델 리스트를 가져오지 못했습니다.")
 
 # 2. 사용자 입력
 category = st.selectbox("문제 영역", ["언어이해", "언어추리", "자료해석", "창의수리"])
@@ -25,27 +33,35 @@ if uploaded_file:
     st.image(img, caption="업로드된 이미지", use_container_width=True)
 
     if st.button("AI 오답 분석 시작"):
-        with st.spinner("AI가 문제를 분석 중입니다..."):
-            # 에러 방지를 위해 모델 이름을 리스트에서 직접 확인 후 할당
-            # 가장 범용적인 'gemini-1.5-flash'를 사용합니다.
-            model = genai.GenerativeModel('gemini-1.5-flash')
+        with st.spinner("최적의 모델을 찾아 분석 중..."):
             
-            prompt = f"너는 LG그룹 인적성 전문가야. 영역은 {category}이야. 이 문제의 핵심 논리와 정확한 풀이, 그리고 메모장/계산기만 사용하는 LG 환경에서의 팁을 알려줘."
+            # 시도할 모델 후보군 (최신 버전부터 순차적으로 시도)
+            model_candidates = [
+                'gemini-1.5-flash-latest', 
+                'gemini-1.5-flash', 
+                'gemini-1.5-pro',
+                'models/gemini-1.5-flash'
+            ]
             
-            try:
-                # 이미지와 텍스트 전송 (가장 표준적인 방식)
-                response = model.generate_content([prompt, img])
-                
-                st.subheader("📝 AI 분석 결과")
-                st.write(response.text)
-                st.success("분석 완료! 내용을 복사해 노션에 저장하세요.")
-                
-            except Exception as e:
-                # 만약 또 404가 난다면 모델 이름을 'models/gemini-1.5-flash'로 시도
-                st.warning("기본 연결 실패, 보조 경로로 재시도합니다...")
+            response_text = None
+            success_model = None
+
+            for model_name in model_candidates:
                 try:
-                    alt_model = genai.GenerativeModel('models/gemini-1.5-flash')
-                    response = alt_model.generate_content([prompt, img])
-                    st.write(response.text)
-                except Exception as final_e:
-                    st.error(f"최종 오류: {final_e}\n구글 AI 스튜디오에서 API 키가 활성 상태인지 확인이 필요합니다.")
+                    model = genai.GenerativeModel(model_name)
+                    prompt = f"너는 LG그룹 인적성 전문가야. 영역은 {category}이야. 이 문제의 핵심 논리와 정확한 풀이를 알려줘."
+                    response = model.generate_content([prompt, img])
+                    response_text = response.text
+                    success_model = model_name
+                    break # 성공하면 루프 탈출
+                except Exception:
+                    continue # 실패하면 다음 모델로 시도
+
+            if response_text:
+                st.subheader(f"📝 AI 분석 결과 (연결 모델: {success_model})")
+                st.write(response_text)
+                st.success("분석 완료! 내용을 복사해 노션에 저장하세요.")
+            else:
+                st.error("모든 모델 연결에 실패했습니다. 구글 AI 스튜디오에서 API 키의 '결제 수단'이나 '사용 제한'을 확인해 보세요.")
+
+st.caption("김시현님의 LG 합격과 하이닉스를 향한 도전을 응원합니다! 🚀")
