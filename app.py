@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from PIL import Image
 import pandas as pd
 from datetime import datetime
@@ -9,13 +10,12 @@ import io
 
 st.set_page_config(page_title="시현님의 오답노트 치트키", layout="wide")
 
-# ── API 연결 설정 ──────────────────────────────────────────────
 try:
     GEMINI_API   = st.secrets["GEMINI_API_KEY"]
     NOTION_TOKEN = st.secrets.get("NOTION_TOKEN", "")
     NOTION_DB_ID = st.secrets.get("NOTION_DB_ID", "")
-    IMGBB_API    = st.secrets.get("IMGBB_API_KEY", "")   # ← 추가
-    genai.configure(api_key=GEMINI_API, transport='rest')
+    IMGBB_API    = st.secrets.get("IMGBB_API_KEY", "")
+    client = genai.Client(api_key=GEMINI_API)
 except Exception:
     st.error("Secrets 설정을 확인해주세요.")
     st.stop()
@@ -109,7 +109,11 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files and st.button("일괄 분석 및 저장 시작"):
-    model = genai.GenerativeModel("gemini-1.5-flash")   # ← 모델명 수정
+    response = client.models.generate_content(
+    model="gemini-2.0-flash",
+    contents=[prompt, img],
+    )
+    analysis_txt = response.text  # ← 모델명 수정
 
     for file in uploaded_files:
         with st.spinner(f"{file.name} 분석 중..."):
