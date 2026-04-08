@@ -4,7 +4,7 @@ from PIL import Image
 
 # 1. 사이트 설정 및 API 키 연결
 st.set_page_config(page_title="LG인적성 AI 오답노트", layout="centered")
-api_key = st.secrets["AIzaSyBmPMJHUoyUx0rjTpt-MmIalaZDRPajprc"] # Streamlit Cloud의 Secrets에서 키를 가져옴
+api_key = st.secrets["GEMINI_API_KEY"]
 genai.configure(api_key=api_key)
 
 # 2. 모델 설정 (속도가 빠른 Gemini 1.5 Flash 추천)
